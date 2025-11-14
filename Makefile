@@ -3,7 +3,7 @@ CFLAGS = -Wall -Wextra
 LDFLAGS = -lcurl -ljansson
 
 TARGET = integrador_apis
-SOURCES = main.c integrador_apis.c
+SOURCES = main.c integrador__apis.c
 OBJECTS = $(SOURCES:.c=.o)
 
 # Verifica se as bibliotecas necessárias estão instaladas
