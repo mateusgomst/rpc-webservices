@@ -4,7 +4,7 @@
 #include <curl/curl.h>
 #include <jansson.h>
 
-//estrutura para armazenar dados do ViaCEP
+/* Estrutura para armazenar dados do ViaCEP */
 typedef struct {
     char cep[16];
     char logradouro[256];
@@ -14,7 +14,7 @@ typedef struct {
     char codigo_ibge[16];
 } DadosEndereco;
 
-//estrutura para armazenar dados do IBGE
+/* Estrutura para armazenar dados do IBGE */
 typedef struct {
     char nome_completo[256];
     char regiao[64];
@@ -23,7 +23,15 @@ typedef struct {
     double densidade;
 } DadosIBGE;
 
-//estrutura para resposta HTTP
+/* Estrutura para armazenar dados de feriados */
+typedef struct {
+    int quantidade_feriados;
+    char proximo_feriado[128];
+    char data_feriado[16];
+    char tipo_feriado[64];
+} DadosFeriados;
+
+/* Estrutura para resposta HTTP */
 typedef struct {
     char *data;
     size_t size;
@@ -32,6 +40,7 @@ typedef struct {
 /* Funções principais */
 int buscar_endereco(const char *cep, DadosEndereco *endereco);
 int buscar_dados_municipio(const char *codigo_ibge, DadosIBGE *dados);
-void exibir_relatorio_completo(const DadosEndereco *endereco, const DadosIBGE *dados);
+int buscar_feriados(const char *uf, DadosFeriados *feriados);
+void exibir_relatorio_completo(const DadosEndereco *endereco, const DadosIBGE *dados, const DadosFeriados *feriados);
 
 #endif

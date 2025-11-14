@@ -265,14 +265,148 @@ int buscar_dados_municipio(const char *codigo_ibge, DadosIBGE *dados) {
 }
 
 /* ========================================================================
+   FUNÇÃO: buscar_feriados
+   ========================================================================
+   Busca informações sobre feriados na API Brasil API.
+   
+   Fluxo:
+   1. Obtém ano atual
+   2. Monta URL com ano
+   3. Faz requisição HTTP GET
+   4. Parseia JSON de resposta
+   5. Identifica próximo feriado a partir da data atual
+   6. Preenche estrutura DadosFeriados
+   
+   Nota: O parâmetro 'uf' não é utilizado pois a API retorna feriados
+         nacionais. Mantido para compatibilidade com a assinatura.
+   ======================================================================== */
+int buscar_feriados(const char *uf __attribute__((unused)), DadosFeriados *feriados) {
+    CURL *curl;
+    CURLcode res;
+    HTTPResponse response = {NULL, 0};
+    char url[512];
+    time_t now;
+    struct tm *timeinfo;
+    int ano_atual;
+    
+    // Obtém ano atual
+    time(&now);
+    timeinfo = localtime(&now);
+    ano_atual = timeinfo->tm_year + 1900;
+    
+    printf("\n[API 3] Consultando Brasil API (Feriados)...\n");
+    snprintf(url, sizeof(url), 
+             "https://brasilapi.com.br/api/feriados/v1/%d", 
+             ano_atual);
+    printf("URL: %s\n", url);
+    
+    curl = curl_easy_init();
+    if (!curl) {
+        fprintf(stderr, "[ERRO] Falha ao inicializar CURL\n");
+        return -1;
+    }
+    
+    // Configura requisição
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&response);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "IntegradorAPIs/1.0");
+    
+    // Executa requisição
+    res = curl_easy_perform(curl);
+    
+    if (res != CURLE_OK) {
+        fprintf(stderr, "[ERRO] curl_easy_perform() falhou: %s\n",
+                curl_easy_strerror(res));
+        curl_easy_cleanup(curl);
+        return -1;
+    }
+    
+    curl_easy_cleanup(curl);
+    
+    // Parseia JSON
+    json_error_t error;
+    json_t *root = json_loads(response.data, 0, &error);
+    
+    if (!root) {
+        fprintf(stderr, "[ERRO] Falha ao parsear JSON: %s\n", error.text);
+        free(response.data);
+        return -1;
+    }
+    
+    free(response.data);
+    
+    if (!json_is_array(root)) {
+        fprintf(stderr, "[ERRO] Resposta não é um array\n");
+        json_decref(root);
+        return -1;
+    }
+    
+    // Inicializa contadores
+    feriados->quantidade_feriados = 0;
+    int proximo_encontrado = 0;
+    
+    // Data atual no formato YYYY-MM-DD
+    char data_hoje[16];
+    strftime(data_hoje, sizeof(data_hoje), "%Y-%m-%d", timeinfo);
+    
+    // Percorre todos os feriados
+    size_t array_size = json_array_size(root);
+    for (size_t i = 0; i < array_size; i++) {
+        json_t *feriado = json_array_get(root, i);
+        
+        json_t *j_date = json_object_get(feriado, "date");
+        json_t *j_name = json_object_get(feriado, "name");
+        json_t *j_type = json_object_get(feriado, "type");
+        
+        if (!json_is_string(j_date) || !json_is_string(j_name)) {
+            continue;
+        }
+        
+        const char *data = json_string_value(j_date);
+        const char *nome = json_string_value(j_name);
+        const char *tipo = json_is_string(j_type) ? json_string_value(j_type) : "national";
+        
+        // Conta todos os feriados
+        feriados->quantidade_feriados++;
+        
+        // Procura o próximo feriado (após hoje)
+        if (!proximo_encontrado && strcmp(data, data_hoje) >= 0) {
+            strncpy(feriados->proximo_feriado, nome, sizeof(feriados->proximo_feriado) - 1);
+            strncpy(feriados->data_feriado, data, sizeof(feriados->data_feriado) - 1);
+            strncpy(feriados->tipo_feriado, tipo, sizeof(feriados->tipo_feriado) - 1);
+            proximo_encontrado = 1;
+        }
+    }
+    
+    json_decref(root);
+    
+    if (!proximo_encontrado) {
+        snprintf(feriados->proximo_feriado, sizeof(feriados->proximo_feriado), 
+                 "Nenhum feriado restante em %d", ano_atual);
+        snprintf(feriados->data_feriado, sizeof(feriados->data_feriado), "N/A");
+        snprintf(feriados->tipo_feriado, sizeof(feriados->tipo_feriado), "N/A");
+    }
+    
+    printf("[SUCESSO] %d feriados nacionais encontrados em %d\n", 
+           feriados->quantidade_feriados, ano_atual);
+    if (proximo_encontrado) {
+        printf("Próximo feriado: %s (%s)\n", 
+               feriados->proximo_feriado, feriados->data_feriado);
+    }
+    
+    return 0;
+}
+
+/* ========================================================================
    FUNÇÃO: exibir_relatorio_completo
    ========================================================================
-   Combina e exibe dados de ambas as APIs de forma integrada.
+   Combina e exibe dados das três APIs de forma integrada.
    ======================================================================== */
-void exibir_relatorio_completo(const DadosEndereco *endereco, const DadosIBGE *dados) {
+void exibir_relatorio_completo(const DadosEndereco *endereco, const DadosIBGE *dados, const DadosFeriados *feriados) {
     printf("\n");
     printf("╔══════════════════════════════════════════════════════════════╗\n");
-    printf("║     RELATÓRIO INTEGRADO - LOCALIZAÇÃO E DEMOGRAFIA          ║\n");
+    printf("║   RELATÓRIO INTEGRADO - LOCALIZAÇÃO, DEMOGRAFIA E FERIADOS  ║\n");
     printf("╠══════════════════════════════════════════════════════════════╣\n");
     printf("║ ENDEREÇO (ViaCEP)                                            ║\n");
     printf("╟──────────────────────────────────────────────────────────────╢\n");
@@ -290,10 +424,17 @@ void exibir_relatorio_completo(const DadosEndereco *endereco, const DadosIBGE *d
     printf("║ População:  %-48d ║\n", dados->populacao);
     printf("║ Área:       %.2f km²%-38s ║\n", dados->area, "");
     printf("║ Densidade:  %.2f hab/km²%-33s ║\n", dados->densidade, "");
+    printf("╠══════════════════════════════════════════════════════════════╣\n");
+    printf("║ FERIADOS NACIONAIS (Brasil API)                             ║\n");
+    printf("╟──────────────────────────────────────────────────────────────╢\n");
+    printf("║ Total de feriados no ano: %-30d ║\n", feriados->quantidade_feriados);
+    printf("║ Próximo feriado:  %-39s ║\n", feriados->proximo_feriado);
+    printf("║ Data:             %-39s ║\n", feriados->data_feriado);
+    printf("║ Tipo:             %-39s ║\n", feriados->tipo_feriado);
     printf("╚══════════════════════════════════════════════════════════════╝\n");
     printf("\n");
     printf("═══════════════════════════════════════════════════════════════\n");
-    printf("  ANÁLISE INTEGRADA\n");
+    printf("  ANÁLISE INTEGRADA DAS 3 APIs\n");
     printf("═══════════════════════════════════════════════════════════════\n");
     printf("\n");
     printf("O endereço %s está localizado em\n", endereco->logradouro);
@@ -301,6 +442,13 @@ void exibir_relatorio_completo(const DadosEndereco *endereco, const DadosIBGE *d
            endereco->cidade, endereco->uf, dados->regiao);
     printf("O município possui população estimada de %d habitantes,\n", dados->populacao);
     printf("distribuídos em aproximadamente %.2f km², resultando em\n", dados->area);
-    printf("densidade demográfica de %.2f habitantes por km².\n", dados->densidade);
+    printf("densidade demográfica de %.2f habitantes por km².\n\n", dados->densidade);
+    
+    if (strcmp(feriados->data_feriado, "N/A") != 0) {
+        printf("O próximo feriado nacional será: %s,\n", feriados->proximo_feriado);
+        printf("que ocorrerá em %s.\n", feriados->data_feriado);
+    } else {
+        printf("%s.\n", feriados->proximo_feriado);
+    }
     printf("\n");
 }
